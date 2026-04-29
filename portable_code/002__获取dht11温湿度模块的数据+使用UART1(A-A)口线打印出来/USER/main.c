@@ -1,0 +1,89 @@
+/**
+ ******************************************************************************
+ * @file    main.c
+ * @author  FZetc飞贼
+ * @version V0.0.1
+ * @date    2026.03.30
+ * @brief   说明：
+ *				获取dht11温湿度模块的数据+使用UART1(A-A)口线打印出来
+  *         步骤：
+  *            1、保证stm32f4xx.h文件123行的HSE_VALUE时钟源值为8000000，保证system_stm32f4xx.c文件的316行的PLL_M系数为8
+  *			   2、GEC-M4板子上丝印层UART1跳线帽处，需要短接1-3和2-4，A-A口线要连接电脑和单片机USB口，保证调试通信和5V供电
+  *            3、串口助手的端口要打开连接开发板的那个串口端口，串口助手的波特率要和单片机串口程序保持一致
+  *            4、保证keil5软件和串口助手都是一个编码格式(推荐：GB2312或utf-8格式)
+  *    
+ ******************************************************************************
+ * @attention
+ *
+ * 本文档只供学习使用，不得商用，违者必究
+ *
+ * 微信公众号：    FZetc飞贼
+ * 全视频平台：    FZetc飞贼
+ * CSDN博客：      https://blog.csdn.net/qq_58629108?type=blog
+ * 有疑问或者建议：FZetcSnitch@163.com
+ *
+ ******************************************************************************
+ */
+
+#include "main.h"
+#include "hc_sr04.h"
+#include "dht11.h"
+
+
+/**
+  * @brief  主函数
+  * @note   None
+  * @param  None
+  * @retval None
+  */
+int main(void)
+{
+
+	// 一、外设相关变量区域
+	int8_t  dht11_ret    =  0;
+	uint8_t dht11_buf[5] = {0};
+							 
+	
+	// 二、外设初始化区域
+	NVIC_PriorityGroupConfig(NVIC_PriorityGroup_2);		// 选择中断分组为第2组(抢占式优先级：4级， 响应式优先级：4级)
+	DELAY_SysTickInit(168);								// 系统定时器的时钟源初始化(168MHZ或21MHZ)
+	UART1_Init(115200);									// 串口1初始化为115200
+	
+	LED_Init();
+	BUZZER_Init();
+	KEY_Init();
+
+	HC_SR04_Init();										// 超声波hc_sr04模块初始化
+	DHT11_Init();										// 温湿度dht11模块初始化
+	printf("This is dht11 test!\r\n");					// 下位机(单片机->上位机(电脑、手机端的串口助手))
+	
+	// 二、外设功能具现化区域
+	while(1)										
+	{
+		dht11_ret = DHT11_GetData(dht11_buf);
+		if(dht11_ret == 0)
+		{
+			printf("温度：%d.%d℃ \r\n",   dht11_buf[2], dht11_buf[3]);
+			printf("湿度：%d.%d%%RH \r\n", dht11_buf[0], dht11_buf[1]);
+		}
+		else
+		{
+			printf("错误码：%d\r\n", dht11_ret);
+		}
+		delay_ms(6000);
+	}
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,24 @@
+--cpu Cortex-M4.fp
+"..\obj\main.o"
+"..\obj\stm32f4xx_it.o"
+"..\obj\system_stm32f4xx.o"
+"..\obj\my_config.o"
+"..\obj\my_lib.o"
+"..\obj\buzzer.o"
+"..\obj\key.o"
+"..\obj\led.o"
+"..\obj\hc_sr04.o"
+"..\obj\delay.o"
+"..\obj\uart.o"
+"..\obj\stm32f4xx_gpio.o"
+"..\obj\stm32f4xx_rcc.o"
+"..\obj\stm32f4xx_exti.o"
+"..\obj\stm32f4xx_syscfg.o"
+"..\obj\misc.o"
+"..\obj\stm32f4xx_tim.o"
+"..\obj\stm32f4xx_usart.o"
+"..\obj\startup_stm32f40_41xxx.o"
+--strict --scatter "..\OBJ\stm32_poject.sct"
+--summary_stderr --info summarysizes --map --xref --callgraph --symbols
+--info sizes --info totals --info unused --info veneers
+--list ".\Listings\stm32_poject.map" -o ..\OBJ\stm32_poject.axf

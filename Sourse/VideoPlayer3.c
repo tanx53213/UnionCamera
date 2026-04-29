@@ -1,0 +1,393 @@
+// 添加必要的头文件
+#include <sys/stat.h>
+#include <time.h>
+#include <dirent.h>
+#include <sys/types.h>
+#include "camera.h"
+
+// 定义录像文件夹路径
+#define RECORD_PATH "/tmp/camera_records"
+#define MAX_RECORDS 200
+
+#define TS_DEV "/dev/input/event0"
+
+int lcd_fd;
+unsigned int *lcd_mp;
+
+static int camera_fd = -1;
+static unsigned int n_buffers = 0;
+static struct buffer *buffers = NULL;
+
+extern int buttonCount;
+
+/****************************************************************************************/
+
+// 停止摄像头函数
+void stop_camera(void)
+{
+    if (camera_fd >= 0)
+    {
+        enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        ioctl(camera_fd, VIDIOC_STREAMOFF, &type);
+        close(camera_fd);
+        camera_fd = -1;
+    }
+}
+
+// 返回主界面函数
+void return_to_main(void)
+{
+    switch (current_state)
+    {
+        case STATE_BACKUP:
+            printf("退出后视功能\n");
+            stop_camera();
+            break;
+        case STATE_RECORD:
+            printf("退出录像功能\n");
+            stop_camera();
+            break;
+        case STATE_HISTORY:
+            printf("退出历史记录\n");
+            break;
+        case STATE_GUARD:
+            printf("退出守护进程\n");
+            stop_camera();
+            break;
+        default:
+            break;
+    }
+
+    Bmp_Decode("/tmp/Object_Yunx_Driving_Recorder2/Data/runV1.bmp", lcd_mp);
+    current_state = STATE_MAIN;
+}
+
+/****************************************************************************************/
+
+// YUV转BMP（保留原有函数，同时作为yuyv_to_bmp3使用）
+void yuyv_to_bmp(char *yuvbuf, const char *bmp_file)
+{
+    FILE *bmp_fp = fopen(bmp_file, "wb");
+    if (!bmp_fp)
+    {
+        printf("创建BMP文件失败\n");
+        return;
+    }
+
+    char header[54] = {0};
+    fwrite(header, 1, 54, bmp_fp);
+    fseek(bmp_fp, 54, SEEK_SET);
+
+    char buf_line[640 * 3] = {0};
+
+    for (int y = 479; y >= 0; y--)
+    {
+        for (int x = 0; x < 640; x++)
+        {
+            int i = y * 640 + x;
+            unsigned int rgb = pixel_yuv2rgb(yuvbuf[i * 2], yuvbuf[i * 2 + 1], yuvbuf[i * 2 + 3]);
+            buf_line[x * 3]     = (rgb) & 0xFF;
+            buf_line[x * 3 + 1] = (rgb >> 8) & 0xFF;
+            buf_line[x * 3 + 2] = (rgb >> 16) & 0xFF;
+        }
+        fwrite(buf_line, 1, 640 * 3, bmp_fp);
+    }
+
+    fclose(bmp_fp);
+}
+
+// yuyv_to_bmp3 直接复用 yuyv_to_bmp
+void yuyv_to_bmp3(char *yuvbuf, const char *bmp_file)
+{
+    yuyv_to_bmp(yuvbuf, bmp_file);
+}
+
+/****************************************************************************************/
+
+// 录像功能（只保留一份，合并了子目录+bmp保存的新版逻辑）
+void record_video(void)
+{
+    char timestamp[32];
+    char filepath[256];
+    char dir_path[256];
+    time_t now;
+    struct tm *timeinfo;
+    bool first_frame = true;
+
+    open_device();
+    init_device();
+    start_capturing();
+
+    // 创建录像根目录
+    mkdir(RECORD_PATH, 0777);
+
+    // 以时间戳创建子目录
+    time(&now);
+    timeinfo = localtime(&now);
+    strftime(timestamp, sizeof(timestamp), "%Y%m%d_%H%M%S", timeinfo);
+    snprintf(dir_path, sizeof(dir_path), "%s/%s", RECORD_PATH, timestamp);
+    mkdir(dir_path, 0777);
+
+    // yuv原始数据文件路径
+    snprintf(filepath, sizeof(filepath), "%s/%s.yuv", dir_path, timestamp);
+
+    FILE *fp = fopen(filepath, "wb");
+    if (!fp)
+    {
+        printf("Failed to create record file\n");
+        stop_camera();
+        return;
+    }
+
+    int frame_count = 0;
+    while (frame_count < 150 && current_state == STATE_RECORD)
+    {
+        struct v4l2_buffer buf;
+        memset(&buf, 0, sizeof(buf));
+        buf.type   = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        buf.memory = V4L2_MEMORY_MMAP;
+
+        fd_set fds;
+        struct timeval tv;
+        FD_ZERO(&fds);
+        FD_SET(camera_fd, &fds);
+        tv.tv_sec  = 2;
+        tv.tv_usec = 0;
+
+        int r = select(camera_fd + 1, &fds, NULL, NULL, &tv);
+        if (r == -1)
+        {
+            if (errno == EINTR) continue;
+            break;
+        }
+        if (r == 0)
+        {
+            printf("select timeout\n");
+            break;
+        }
+
+        if (-1 == ioctl(camera_fd, VIDIOC_DQBUF, &buf))
+            break;
+
+        // 第一帧显示到LCD
+        if (first_frame)
+        {
+            yuyv_to_lcd(buffers[buf.index].start);
+            first_frame = false;
+            printf("显示第一帧\n");
+        }
+
+        // 每帧保存为BMP
+        char bmp_file[512];
+        snprintf(bmp_file, sizeof(bmp_file), "%s/frame_%03d.bmp", dir_path, frame_count);
+        yuyv_to_bmp(buffers[buf.index].start, bmp_file);
+
+        // 写入yuv原始数据
+        fwrite(buffers[buf.index].start, 1, buf.bytesused, fp);
+
+        if (-1 == ioctl(camera_fd, VIDIOC_QBUF, &buf))
+            break;
+
+        frame_count++;
+        printf("\r录制进度: %d%%", (frame_count * 100) / 150);
+        fflush(stdout);
+    }
+
+    printf("\n录制完成\n");
+    fclose(fp);
+    stop_camera();
+}
+
+/****************************************************************************************/
+
+// 显示历史记录
+void show_history(void)
+{
+    DIR *dir;
+    struct dirent *ent;
+    char filepath[256];
+
+    dir = opendir(RECORD_PATH);
+    if (dir == NULL)
+    {
+        printf("No history records\n");
+        return;
+    }
+
+    while ((ent = readdir(dir)) != NULL)
+    {
+        if (ent->d_name[0] == '.') continue;
+
+        snprintf(filepath, sizeof(filepath), "%s/%s", RECORD_PATH, ent->d_name);
+        FILE *fp = fopen(filepath, "rb");
+        if (fp)
+        {
+            char *buffer = malloc(640 * 480 * 2);
+            if (buffer)
+            {
+                size_t bytes_read = fread(buffer, 1, 640 * 480 * 2, fp);
+                if (bytes_read > 0)
+                    yuyv_to_lcd(buffer);
+                free(buffer);
+            }
+            fclose(fp);
+            break;
+        }
+    }
+    closedir(dir);
+}
+
+/****************************************************************************************/
+
+// 循环录像功能
+void circular_recording(void)
+{
+    while (1)
+    {
+        DIR *dir = opendir(RECORD_PATH);
+        int count = 0;
+        struct dirent *ent;
+
+        if (dir)
+        {
+            while ((ent = readdir(dir)) != NULL)
+            {
+                if (ent->d_name[0] != '.') count++;
+            }
+            closedir(dir);
+        }
+
+        if (count >= MAX_RECORDS)
+        {
+            dir = opendir(RECORD_PATH);
+            time_t oldest_time = time(NULL);
+            char oldest_file[256] = {0};
+
+            if (dir)
+            {
+                while ((ent = readdir(dir)) != NULL)
+                {
+                    if (ent->d_name[0] == '.') continue;
+
+                    char filepath[512];
+                    struct stat st;
+                    snprintf(filepath, sizeof(filepath), "%s/%s", RECORD_PATH, ent->d_name);
+
+                    if (stat(filepath, &st) == 0)
+                    {
+                        if (st.st_mtime < oldest_time)
+                        {
+                            oldest_time = st.st_mtime;
+                            strcpy(oldest_file, filepath);
+                        }
+                    }
+                }
+                closedir(dir);
+
+                if (oldest_file[0])
+                {
+                    char cmd[512];
+                    bzero(cmd, sizeof(cmd));
+                    sprintf(cmd, "rm -rf %s", oldest_file);
+                    system(cmd);
+                    printf("过期录像: %s 已清理\n", oldest_file);
+                }
+            }
+        }
+
+        record_video();
+    }
+}
+
+/****************************************************************************************/
+
+// 按钮按下处理
+void handleButtonPress(Button *button, int buttonIndex)
+{
+    if (button == NULL || buttonIndex < 0 || buttonIndex >= buttonCount)
+    {
+        printf("无效的按钮索引\n");
+        return;
+    }
+
+    switch (buttonIndex)
+    {
+        case 0:  // 后视
+            if (current_state == STATE_MAIN)
+            {
+                printf("进入后视功能\n");
+                current_state = STATE_BACKUP;
+                open_device();
+                init_device();
+                start_capturing();
+                mainloop();
+            }
+            break;
+
+        case 1:  // 录像
+            if (current_state == STATE_MAIN)
+            {
+                printf("进入录像功能\n");
+                current_state = STATE_RECORD;
+                open_device();
+                init_device();
+                start_capturing();
+                mainloop3();
+            }
+            break;
+
+        case 2:  // 历史
+            if (current_state == STATE_MAIN)
+            {
+                printf("进入历史记录\n");
+                current_state = STATE_HISTORY;
+                show_history();
+            }
+            break;
+
+        case 3:  // 返回
+            if (current_state != STATE_MAIN)
+                return_to_main();
+            break;
+
+        case 4:  // 守护进程
+            if (current_state == STATE_MAIN)
+            {
+                printf("进入守护进程\n");
+                current_state = STATE_GUARD;
+                circular_recording();
+            }
+            break;
+
+        case 5:  // 电源键 ← 修复：case5 改为 case 5
+            if (current_state == STATE_MAIN)
+            {
+                printf("程序退出\n");
+                stop_camera();
+                exit(0);
+            }
+            else
+            {
+                return_to_main();
+            }
+            break;
+    }
+}
+
+/****************************************************************************************/
+
+// 触摸事件处理
+void handleTouchEvent(ts_pix *event, Button *buttons, int buttonCount)
+{
+    if (!event->isPressed)
+        return;
+
+    for (int i = 0; i < buttonCount; i++)
+    {
+        if (isPointInButton(event->pix_x, event->pix_y, &buttons[i]))
+        {
+            handleButtonPress(&buttons[i], i);
+            break;
+        }
+    }
+}

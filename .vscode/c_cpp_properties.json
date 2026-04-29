@@ -1,0 +1,20 @@
+{
+  "configurations": [
+    {
+      "name": "linux-arm-gcc",
+      "includePath": [
+        "${workspaceFolder}/Include",
+        "${workspaceFolder}/Sourse",
+        "${workspaceFolder}/**"
+      ],
+      "compilerPath": "/usr/bin/arm-linux-gcc",
+      "cStandard": "${default}",
+      "cppStandard": "${default}",
+      "intelliSenseMode": "linux-gcc-arm",
+      "compilerArgs": [
+        "-I${workspaceFolder}/Include"
+      ]
+    }
+  ],
+  "version": 4
+}
