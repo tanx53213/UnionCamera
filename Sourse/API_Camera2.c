@@ -110,10 +110,12 @@ unsigned int pixel_yuv2rgb(char Y,char Cb,char Cr)
 // //以行为单位循环读取BMP图片的颜
 //    }
 
-//把YUV格式的图像显示在电脑上
+// [已弃用] 测试函数，将 YUV 数据叠加到 BMP 模板上显示
+// 注意：此函数从未被调用，仅保留作参考
 void yuyv_to_lcd2(char *yuvbuf)
 {   
    char buf_line[800*3]={0};
+    // 注意：需要当前目录下存在 1.bmp 文件
     FILE *bmp_fp = fopen("./1.bmp","rb");
     if (bmp_fp == NULL)
     {
@@ -176,7 +178,7 @@ void yuyv_to_lcd(char *yuvbuf)
     {
         for (size_t x = 0; x < 640; x++)
         {
-            lcd_mp[y*800+x+80] = rgbbuf[y*640+x]; 
+            lcd_mp[y*800+x+30] = rgbbuf[y*640+x]; 
         } 
     } 
 }
@@ -279,69 +281,64 @@ void start_capturing(void)
 
 
 
-void mainloop(void)      //主循环(缓冲区出队+进行像素转换+显示在LCD上+缓冲区入队)
+void *backup_camera_thread(void *arg)      // 后视摄像头线程(非阻塞，可被电源键中断)
 {
-	unsigned int count;
-    struct v4l2_buffer buf;
-	unsigned int i;
+    (void)arg;
 
-    count = 100;
-
-    while (count-- > 0 && current_state == STATE_BACKUP) 
+    while (current_state == STATE_BACKUP)
     {
-        //死循环
-        for (;;) 
+        //添加了超时机制，去检测文件描述符的读状态
+        fd_set fds;
+        struct timeval tv;
+        int r;
+
+        FD_ZERO (&fds);
+        FD_SET (camera_fd, &fds);
+
+        //超时时间是2s，也就是如果超过2s摄像头的读状态没发生变化，说明不可读
+        tv.tv_sec = 2;
+        tv.tv_usec = 0;
+
+        r = select (camera_fd + 1, &fds, NULL, NULL, &tv);
+
+        if (-1 == r) 
         {
-            //添加了超时机制，去检测文件描述符的读状态
-            fd_set fds;
-            struct timeval tv;
-            int r;
-
-            FD_ZERO (&fds);
-            FD_SET (camera_fd, &fds);
-
-            //超时时间是2s，也就是如果超过2s摄像头的读状态没发生变化，说明不可读
-            tv.tv_sec = 2;
-            tv.tv_usec = 0;
-
-            r = select (camera_fd + 1, &fds, NULL, NULL, &tv);
-
-            if (-1 == r) 
-            {
-                if (EINTR == errno)
-                        continue;
-            }
-
-            if (0 == r) {
-                    fprintf (stderr, "select timeout\n");
-                    exit (EXIT_FAILURE);
-            }
-
-            //如果缓冲区中存储画面，则把缓冲区出队
-            for(int i =0;i < n_buffers; ++i)
-            {
-                struct v4l2_buffer buf;
-                memset (&buf,0,sizeof(buf));                    //清空内存
-                buf.type        = V4L2_BUF_TYPE_VIDEO_CAPTURE;  //数据流的类型
-                buf.memory      = V4L2_MEMORY_MMAP;             //内存映射方式
-                ioctl(camera_fd, VIDIOC_DQBUF, &buf);           //把缓冲区出队
-
-
-                //应该用户把出队的缓冲区的像素进行转换，并显示在LCD上
-                yuyv_to_lcd(buffers[i].start);
-                Draw_line();
-
-                //处理完成后，则把缓冲区入队
-                ioctl (camera_fd, VIDIOC_QBUF, &buf);           //把缓冲区入队
-            }          
-          if (current_state != STATE_BACKUP)
-          {
-            break;  // 如果状态改变，退出循环
+            if (EINTR == errno)
+                    continue;
+            break;
         }
-        
+
+        if (0 == r) {
+                fprintf (stderr, "backup camera: select timeout\n");
+                break;
         }
-    
+
+        //如果缓冲区中存储画面，则把缓冲区出队
+        for(unsigned int i = 0; i < n_buffers; ++i)
+        {
+            struct v4l2_buffer buf;
+            memset (&buf,0,sizeof(buf));                    //清空内存
+            buf.type        = V4L2_BUF_TYPE_VIDEO_CAPTURE;  //数据流的类型
+            buf.memory      = V4L2_MEMORY_MMAP;             //内存映射方式
+
+            if (-1 == ioctl(camera_fd, VIDIOC_DQBUF, &buf))           //把缓冲区出队
+                goto exit_thread;
+
+            //应该用户把出队的缓冲区的像素进行转换，并显示在LCD上
+            yuyv_to_lcd(buffers[buf.index].start);
+            Draw_line();
+
+            //处理完成后，则把缓冲区入队
+            if (-1 == ioctl (camera_fd, VIDIOC_QBUF, &buf))           //把缓冲区入队
+                goto exit_thread;
+
+            if (current_state != STATE_BACKUP)
+                goto exit_thread;
+        }
     }
+
+exit_thread:
+    return NULL;
 }
 
 

@@ -23,9 +23,7 @@
 
 #include"camera.h"
 
-#define LCD_DEV     "/dev/fb0"
-
-#define MMAP_SIZE   800*480*4
+// LCD_DEV, LCD_MAPSIZE 已在 camera.h 中定义
 
 
 

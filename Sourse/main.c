@@ -1,23 +1,43 @@
 #include "camera.h"
 #include <pthread.h>
 
-// 条件选择读取当前文件夹下的数据读取
-static void resolve_asset_path(char *out, size_t out_size, const char *relative_path)
+// 动态路径解析：无视项目名称变化，通过多种策略自动查找资源文件
+//   策略1: 相对于当前工作目录 ./Data/<file>
+//   策略2: 相对于可执行文件所在目录 <exe_dir>/Data/<file>
+//   策略3: 通用回退 /tmp/Data/<file>
+void resolve_asset_path(char *out, size_t out_size, const char *relative_path)
 {
-    char local_obj_path[256] = {0};
-    char local_data_path[256] = {0};
-    char fallback_path[256] = {0};
+    char candidate[256] = {0};
 
-    snprintf(local_obj_path, sizeof(local_obj_path), "./Object_Yunx_Driving_Recorder2/Data/%s", relative_path);
-    snprintf(local_data_path, sizeof(local_data_path), "./Data/%s", relative_path);
-    snprintf(fallback_path, sizeof(fallback_path), "/tmp/Object_Yunx_Driving_Recorder2/Data/%s", relative_path);
+    // 策略1 — 相对于当前工作目录
+    snprintf(candidate, sizeof(candidate), "./Data/%s", relative_path);
+    if (access(candidate, R_OK) == 0)
+    {
+        snprintf(out, out_size, "%s", candidate);
+        return;
+    }
 
-    if (access(local_obj_path, R_OK) == 0)
-        snprintf(out, out_size, "%s", local_obj_path);
-    else if (access(local_data_path, R_OK) == 0)
-        snprintf(out, out_size, "%s", local_data_path);
-    else
-        snprintf(out, out_size, "%s", fallback_path);
+    // 策略2 — 相对于可执行文件所在目录 (通过 /proc/self/exe)
+    char exe_path[256] = {0};
+    ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (len > 0)
+    {
+        exe_path[len] = '\0';
+        char *last_slash = strrchr(exe_path, '/');
+        if (last_slash)
+        {
+            *last_slash = '\0';  // 去掉可执行文件名，保留目录路径
+            snprintf(candidate, sizeof(candidate), "%s/Data/%s", exe_path, relative_path);
+            if (access(candidate, R_OK) == 0)
+            {
+                snprintf(out, out_size, "%s", candidate);
+                return;
+            }
+        }
+    }
+
+    // 策略3 — 通用回退路径 (无项目名依赖)
+    snprintf(out, out_size, "/tmp/Data/%s", relative_path);
 }
 
 pthread_mutex_t lcd_mutex = PTHREAD_MUTEX_INITIALIZER;

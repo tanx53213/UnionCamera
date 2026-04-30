@@ -3,9 +3,11 @@
 void Draw_line(void)
  {
     int x, y, i = 0;
+    // 倒车辅助线绘制在摄像头区域 (列30~669, 640px宽)
     for(y = 479; y >= 240; y--)
     {
-        for(x = i; x < 39 + i; x++)
+        // 左侧窄标线 (39px)
+        for(x = 30 + i; x < 69 + i; x++)
         {
             if(y > 410)
             {
@@ -20,7 +22,8 @@ void Draw_line(void)
                 *(lcd_mp + 800 * y + x) = 0xFF0000; 
             }
         }
-        for(x = 799 - i; x > 799 - i - 30; x--)
+        // 右侧窄标线 (30px), 位于摄像头右边缘 669
+        for(x = 669 - i; x > 639 - i; x--)
         {
             if(y > 410)
             {
@@ -35,7 +38,8 @@ void Draw_line(void)
                 *(lcd_mp + 800 * y + x) = 0xFF0000; 
             }
         }
-        for(x = i; x < 80 + i; x++)
+        // 左侧宽标线 (80px)
+        for(x = 30 + i; x < 110 + i; x++)
         {
             if(410 >= y && y >= 380)
             {
@@ -50,7 +54,8 @@ void Draw_line(void)
                 *(lcd_mp + 800 * y + x) = 0xFF0000; 
             }
         }    
-        for(x = 799 - i; x > 799 - i - 80; x--)    
+        // 右侧宽标线 (80px), 位于摄像头右边缘 669
+        for(x = 669 - i; x > 589 - i; x--)    
         {
             if(410 >= y && y >= 380)
             {

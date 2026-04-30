@@ -3,11 +3,7 @@
 #include "camera.h"
 #include <pthread.h>
 
-//为了提高程序的可移植性，LCD的设备文件的路径通过宏定义实现
-#define  LCD_DEV   "/dev/fb0"
-
-//为了提高程序的可移植性，映射内存的大小通过宏定义实现
-#define  LCD_MAPSIZE   800*480*4
+// LCD_DEV, LCD_MAPSIZE 已在 camera.h 中定义
 // 天气结构体
 
 // lcd_mp/program_running/lcd_mutex 均已在 main.c 定义，通过 camera.h extern 引用
@@ -67,11 +63,33 @@ void* weather_time_thread(void* arg) //天气与时间线程
     if (local_lcd_mp == NULL)
         local_lcd_mp = lcd_mp;  // 回退到全局变量
 
-    // 打开字体
-    font *f = fontLoad("/usr/share/fonts/DroidSansFallback.ttf");
+    // 加载字体 (多层回退: 项目自带 → 系统路径 → 备选系统路径)
+    //   项目自带字体需放入 Data/ 目录 (如: Data/hei.TTF, Data/DroidSansFallback.ttf)
+    font *f = NULL;
+    char font_path[256] = {0};
+
+    // 1. 优先使用 Data 目录下随项目分发的字体 (通过路径解析)
+    resolve_asset_path(font_path, sizeof(font_path), "DroidSansFallback.ttf");
+    f = fontLoad(font_path);
     if (f == NULL)
     {
-        fprintf(stderr, "weather_time_thread: 字体加载失败\n");
+        // 2. 系统标准路径
+        f = fontLoad("/usr/share/fonts/DroidSansFallback.ttf");
+    }
+    if (f == NULL)
+    {
+        // 3. 系统备选路径 (部分发行版)
+        f = fontLoad("/usr/share/fonts/truetype/DroidSansFallback.ttf");
+    }
+    if (f == NULL)
+    {
+        // 4. 项目自带中文字体 hei.TTF (freetype字库使用/ 目录)
+        resolve_asset_path(font_path, sizeof(font_path), "hei.TTF");
+        f = fontLoad(font_path);
+    }
+    if (f == NULL)
+    {
+        fprintf(stderr, "weather_time_thread: 所有字体路径均加载失败，天气/时间将不显示\n");
         return NULL;
     }
     printf("font ptr: %p\n", f);

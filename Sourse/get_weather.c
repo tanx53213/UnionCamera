@@ -7,7 +7,7 @@
 #include <sys/wait.h>
 #include "camera.h"
 
-#define WEATHER_TXTPATH "./weather.txt"
+// WEATHER_TXTPATH 已在 camera.h 中统一定义为 "./weather.txt"
 
 // 通用字段解析辅助函数
 static int parse_field(const char *buf, const char *key, char *out, size_t out_size)
@@ -44,9 +44,16 @@ int Get_weather(weather1 *weg_p)
     }
 
     char buf[2048] = {0};
+    char weather_path[256] = {0};
 
-    // 打开文件
-    FILE *fp = fopen(WEATHER_TXTPATH, "rb");
+    // 优先使用 resolve_asset_path 查找 weather.txt，回退到 WEATHER_TXTPATH
+    resolve_asset_path(weather_path, sizeof(weather_path), "weather.txt");
+    FILE *fp = fopen(weather_path, "rb");
+    if (fp == NULL)
+    {
+        // 回退到当前目录
+        fp = fopen(WEATHER_TXTPATH, "rb");
+    }
     if (fp == NULL)
     {
         perror("Get_weather: fopen 失败");

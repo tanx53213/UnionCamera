@@ -39,7 +39,7 @@ void BUZZER_Init(void)
   * @param  speed：提示音的长度
   * @retval None
   */
-void BUZZER_TipVoice(uint16_t speed)
+void BUZZER_TipVoice(uint16_t speed)//短时滴答报警
 {
 	BUZZER(ON);
 	delay_ms(speed);
@@ -53,7 +53,7 @@ void BUZZER_TipVoice(uint16_t speed)
   * @param  speed：提示音的长度
   * @retval None
   */
-void BUZZER_WarnVoice(uint16_t speed, uint16_t count)
+void BUZZER_WarnVoice(uint16_t speed, uint16_t count)//长时报警
 {
 	uint16_t i = 0;
 	

@@ -278,3 +278,117 @@
 
 > 修复完成时间：2026-04-30  
 > 下一阶段：编译验证 → 功能测试
+
+---
+
+## Round 2 — 功能增强修复 (2026-04-30)
+
+### FR1 — 后视摄像头画面缩小 + 右侧预留 100×480 数据栏
+
+| 字段 | 值 |
+|------|-----|
+| **时间戳** | 2026-04-30 |
+| **类型** | Feature — 布局调整 + 超声波数据预留 |
+| **涉及文件** | `API_Camera2.c:171-178`, `Draw_line.c` |
+| **修复方式** | `yuyv_to_lcd` 中 LCD 写入偏移从 `x+80` 改为 `x+30`，将 640px 宽摄像头画面居中于左侧 700px 区域（列 30-669），右侧留出列 700-799（100×480）供超声波传感器数据展示。`Draw_line` 的辅助标线坐标同步调整为以摄像头区域边缘（列 30 和 669）为基准。 |
+| **状态** | ✅ 已修复 |
+
+### FR2 — 电源键在任何状态下始终可用
+
+| 字段 | 值 |
+|------|-----|
+| **时间戳** | 2026-04-30 |
+| **类型** | Feature — 触摸响应 + 架构重构 |
+| **涉及文件** | `API_Camera2.c`, `VideoPlayer3.c`, `Include/camera.h` |
+| **描述** | 原先在"后视"等状态下，`mainloop()`/`record_video()`/`circular_recording()` 均以同步方式在触摸线程内执行，导致触摸线程阻塞，无法再响应电源键等触摸事件。 |
+| **修复方式** | 全部改造为异步线程模型： |
+| | 1. `mainloop()` → `backup_camera_thread()`：后视摄像头帧循环在独立线程运行，循环检查 `current_state == STATE_BACKUP` |
+| | 2. `record_video()` → `recording_thread()`：录像功能在独立线程运行 |
+| | 3. `circular_recording()` → `guard_thread()`：守护进程在独立线程运行，`while(1)` 改为 `while(current_state == STATE_GUARD)` |
+| | 4. `handleButtonPress`：case 0/1/4 改为 `pthread_create` 启动线程，不阻塞触摸线程 |
+| | 5. `return_to_main`：先设置 `current_state = STATE_MAIN` 通知各线程退出，再 `pthread_join` 等待线程结束，最后 `stop_camera()` |
+| | 6. `record_video` 循环条件改为 `STATE_RECORD \|\| STATE_GUARD`，使守护进程模式下也能正常录制 |
+| **状态** | ✅ 已修复 |
+
+- **新增 Bug 检出与修复**
+
+#### NB1 — 守护进程中 `record_video()` 状态检查遗漏
+
+| 字段 | 值 |
+|------|-----|
+| **时间戳** | 2026-04-30 |
+| **类型** | 新检出 — 逻辑错误 |
+| **涉及文件** | `VideoPlayer3.c:185` |
+| **描述** | `record_video()` 的 while 条件仅检查 `current_state == STATE_RECORD`，但被 `circular_recording()` 调用时 state 为 `STATE_GUARD`，导致守护进程模式下录制从不执行。 |
+| **修复** | 改为 `current_state == STATE_RECORD \|\| current_state == STATE_GUARD` |
+| **状态** | ✅ 已修复 |
+
+#### NB2 — `circular_recording()` 无限循环无法中断
+
+| 字段 | 值 |
+|------|-----|
+| **时间戳** | 2026-04-30 |
+| **类型** | 新检出 — 逻辑错误 |
+| **涉及文件** | `VideoPlayer3.c:287` |
+| **描述** | `while(1)` 无限循环，即使 state 改变也无法退出。 |
+| **修复** | 改为 `while(current_state == STATE_GUARD)` |
+| **状态** | ✅ 已修复 |
+
+---
+
+## Round 3 — 全项目路径硬编码统一修复 (2026-04-30)
+
+### 问题总览
+
+| # | 文件 | 问题路径 | 类型 |
+|---|------|----------|------|
+| P1 | `VideoPlayer3.c:115` | `/tmp/.../Data/runV1.bmp` | 绝对硬编码 |
+| P2 | `VideoPlayer3.c:36` vs `camera.h` | `RECORD_PATH` 双重定义 | 宏冲突 |
+| P3 | `get_weather.c:10` vs `camera.h` | `WEATHER_TXTPATH` 双重定义 | 宏冲突 |
+| P4 | `test.c:7-11` | `LCD_DEV/MAPSIZE` 重复 | 宏冲突 |
+| P5 | `op_Boot_anim.c:26-28` | `LCD_DEV/MMAP_SIZE` 重复 | 宏冲突 |
+| P6 | `VideoPlayer3.c:39` | `TS_DEV` 重复 | 宏冲突 |
+
+### P1 — 修复 `return_to_main` 硬编码 BMP 路径 ✅
+
+| 字段 | 值 |
+|------|-----|
+| **时间戳** | 2026-04-30 |
+| **类型** | Critical — 运行时路径不可移植 |
+| **涉及文件** | `main.c:5`, `camera.h:39`, `VideoPlayer3.c:115` |
+| **修复方式** | `resolve_asset_path` 从 `static` 提升为全局函数，声明于 `camera.h`。`return_to_main` 改为调用此函数解析 `runV1.bmp` 路径（依次尝试 `./Object_Yunx_Driving_Recorder2/Data/` → `./Data/` → `/tmp/.../Data/`），替代原有硬编码绝对路径。 |
+| **状态** | ✅ 已修复 |
+
+### P2-P6 — 全项目路径宏统一至 camera.h ✅
+
+| 字段 | 值 |
+|------|-----|
+| **时间戳** | 2026-04-30 |
+| **类型** | Medium — 宏符号冲突及维护性 |
+| **涉及文件** | `camera.h`, `VideoPlayer3.c`, `get_weather.c`, `test.c`, `op_Boot_anim.c` |
+| **修复方式** | |
+| | 1. `RECORD_PATH` → 统一定义为 `/tmp/camera_records`（仅 camera.h） |
+| | 2. `WEATHER_TXTPATH` → 统一定义为 `./weather.txt`（仅 camera.h） |
+| | 3. 移除 VideoPlayer3.c 中 `#define RECORD_PATH`、`#define TS_DEV` |
+| | 4. 移除 get_weather.c 中 `#define WEATHER_TXTPATH`，改用 `resolve_asset_path` 查找 weather.txt |
+| | 5. 移除 test.c 中 `#define LCD_DEV`、`#define LCD_MAPSIZE` |
+| | 6. 移除 op_Boot_anim.c 中 `#define LCD_DEV`、`#define MMAP_SIZE` |
+| **状态** | ✅ 已修复 |
+
+### 修复后路径宏集中管理
+
+```
+路径/设备宏        唯一定义位置    用途
+─────────────────────────────────────────────────
+LCD_DEV            camera.h      LCD 帧缓冲设备
+LCD_MAPSIZE        camera.h      LCD mmap 大小
+TS_DEV             camera.h      触摸屏设备
+CAMERA_PATH        camera.h      摄像头设备
+WEATHER_TXTPATH    camera.h      天气数据文件
+RECORD_PATH        camera.h      录像存储根目录
+resolve_asset_path camera.h声明   路径三层回退解析
+                   main.c 实现
+```
+
+> 修复完成时间：2026-04-30
+

@@ -25,6 +25,7 @@
  * CSDN博客：      https://blog.csdn.net/qq_58629108?type=blog
  * 有疑问或者建议：FZetcSnitch@163.com
  *
+ 
  ******************************************************************************
  */
 
@@ -52,14 +53,14 @@ int main(void)
 	UART1_Init(115200);									// 串口1初始化为115200
 	
 	LED_Init();
-	BUZZER_Init();
+	BUZZER_Init();//暂时关闭or开启
 	KEY_Init();
 
 	HC_SR04_Init();										// 超声波hc_sr04模块初始化
 	printf("This is hc_sr04 test!\r\n");				// 下位机(单片机->上位机(电脑、手机端的串口助手))
 	
-	// 二、外设功能具现化区域
-	while(1)										
+// 二、外设功能具现化区域
+while(1)										
 {
     hc_sr04_dis = HC_SR04_GetDis(3.5);
     
@@ -80,6 +81,7 @@ int main(void)
     
     delay_ms(100);
 }
+	
 }
 
 

@@ -298,5 +298,27 @@ timebuffer        testtime.c (定义)               showtime.h extern
 
 ---
 
-> 共检出 **24 个 Bug**：Critical 7 / High 8 / Medium 5 / Low 4  
+> 共检出 **26 个 Bug**：Critical 7 / High 8 / Medium 5 / Low 4 / Round-2 新增 2  
 > **全部已修复 — 修复时间：2026-04-30**
+
+---
+
+## Round 2 — 新增检出 (2026-04-30)
+
+### NB1. 守护进程中 `record_video()` 状态检查遗漏 ✅
+
+| 项目 | 详情 |
+|------|------|
+| 文件 | `VideoPlayer3.c:185` |
+| 类型 | 逻辑错误 |
+| 描述 | `record_video()` 的 while 条件仅检查 `current_state == STATE_RECORD`，但被 `circular_recording()` 调用时状态为 `STATE_GUARD`，导致守护进程模式下录制循环从不执行。 |
+| 修复 | 2026-04-30 — 改为 `current_state == STATE_RECORD \|\| current_state == STATE_GUARD` |
+
+### NB2. `circular_recording()` 无限循环无法中断 ✅
+
+| 项目 | 详情 |
+|------|------|
+| 文件 | `VideoPlayer3.c:287` |
+| 类型 | 逻辑错误 |
+| 描述 | 使用 `while(1)` 无条件无限循环，即使状态改变也无法退出。配合 NB1 共同导致守护进程功能完全不可用。 |
+| 修复 | 2026-04-30 — 改为 `while(current_state == STATE_GUARD)` |

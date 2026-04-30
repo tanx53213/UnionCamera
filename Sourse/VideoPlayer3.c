@@ -32,16 +32,27 @@ static int mkdir_p(const char *path, mode_t mode)
     return 0;
 }
 
-// 定义录像文件夹路径
-#define RECORD_PATH "/tmp/camera_records"
+// 定义录像文件夹路径 (RECORD_PATH 已在 camera.h 中统一定义)
 #define MAX_RECORDS 200
 
-#define TS_DEV "/dev/input/event0"
+// TS_DEV, LCD_DEV, LCD_MAPSIZE 已在 camera.h 中定义
 
 // lcd_fd, lcd_mp, camera_fd, n_buffers, buffers 已在 API_Camera2.c 中定义
 // 此处通过 camera.h 的 extern 声明引用
 
 extern int buttonCount;
+
+// 异步线程 ID 与运行状态标志
+static pthread_t backup_tid;
+static bool backup_thread_active = false;
+static pthread_t record_tid;
+static bool record_thread_active = false;
+static pthread_t guard_tid;
+static bool guard_thread_active = false;
+
+// 线程包装函数声明
+static void *recording_thread(void *arg);
+static void *guard_thread(void *arg);
 
 /****************************************************************************************/
 
@@ -60,14 +71,28 @@ void stop_camera(void)
 // 返回主界面函数
 void return_to_main(void)
 {
-    switch (current_state)
+    // 先改变状态，通知各线程退出循环
+    ProgramState prev_state = current_state;
+    current_state = STATE_MAIN;
+
+    switch (prev_state)
     {
         case STATE_BACKUP:
             printf("退出后视功能\n");
+            if (backup_thread_active)
+            {
+                pthread_join(backup_tid, NULL);
+                backup_thread_active = false;
+            }
             stop_camera();
             break;
         case STATE_RECORD:
             printf("退出录像功能\n");
+            if (record_thread_active)
+            {
+                pthread_join(record_tid, NULL);
+                record_thread_active = false;
+            }
             stop_camera();
             break;
         case STATE_HISTORY:
@@ -75,13 +100,20 @@ void return_to_main(void)
             break;
         case STATE_GUARD:
             printf("退出守护进程\n");
+            if (guard_thread_active)
+            {
+                pthread_join(guard_tid, NULL);
+                guard_thread_active = false;
+            }
             stop_camera();
             break;
         default:
             break;
     }
 
-    Bmp_Decode("/tmp/Object_Yunx_Driving_Recorder2/Data/runV1.bmp", lcd_mp);
+    char main_ui_path[256] = {0};
+    resolve_asset_path(main_ui_path, sizeof(main_ui_path), "runV1.bmp");
+    Bmp_Decode(main_ui_path, lcd_mp);
     current_state = STATE_MAIN;
 }
 
@@ -182,7 +214,7 @@ void record_video(void)
     }
 
     int frame_count = 0;
-    while (frame_count < 150 && current_state == STATE_RECORD)
+    while (frame_count < 150 && (current_state == STATE_RECORD || current_state == STATE_GUARD))
     {
         struct v4l2_buffer buf;
         memset(&buf, 0, sizeof(buf));
@@ -284,7 +316,7 @@ void show_history(void)
 // 循环录像功能
 void circular_recording(void)
 {
-    while (1)
+    while (current_state == STATE_GUARD)
     {
         DIR *dir = opendir(RECORD_PATH);
         int count = 0;
@@ -358,6 +390,24 @@ void circular_recording(void)
     }
 }
 
+// 录像线程包装 (非阻塞)
+static void *recording_thread(void *arg)
+{
+    (void)arg;
+    record_video();
+    if (current_state == STATE_RECORD)
+        current_state = STATE_MAIN;
+    return NULL;
+}
+
+// 守护进程线程包装 (非阻塞)
+static void *guard_thread(void *arg)
+{
+    (void)arg;
+    circular_recording();
+    return NULL;
+}
+
 /****************************************************************************************/
 
 // 按钮按下处理
@@ -379,7 +429,16 @@ void handleButtonPress(Button *button, int buttonIndex)
                 open_device();
                 init_device();
                 start_capturing();
-                mainloop();
+                if (pthread_create(&backup_tid, NULL, backup_camera_thread, NULL) != 0)
+                {
+                    fprintf(stderr, "创建后视线程失败\n");
+                    stop_camera();
+                    current_state = STATE_MAIN;
+                }
+                else
+                {
+                    backup_thread_active = true;
+                }
             }
             break;
 
@@ -388,7 +447,15 @@ void handleButtonPress(Button *button, int buttonIndex)
             {
                 printf("进入录像功能\n");
                 current_state = STATE_RECORD;
-                record_video();
+                if (pthread_create(&record_tid, NULL, recording_thread, NULL) != 0)
+                {
+                    fprintf(stderr, "创建录像线程失败\n");
+                    current_state = STATE_MAIN;
+                }
+                else
+                {
+                    record_thread_active = true;
+                }
             }
             break;
 
@@ -411,11 +478,19 @@ void handleButtonPress(Button *button, int buttonIndex)
             {
                 printf("进入守护进程\n");
                 current_state = STATE_GUARD;
-                circular_recording();
+                if (pthread_create(&guard_tid, NULL, guard_thread, NULL) != 0)
+                {
+                    fprintf(stderr, "创建守护线程失败\n");
+                    current_state = STATE_MAIN;
+                }
+                else
+                {
+                    guard_thread_active = true;
+                }
             }
             break;
 
-        case 5:  // 电源键 ← 修复：case5 改为 case 5
+        case 5:  // 电源键
             if (current_state == STATE_MAIN)
             {
                 printf("程序退出\n");
