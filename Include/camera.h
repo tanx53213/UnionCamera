@@ -45,6 +45,11 @@
 
 extern int lcd_fd;
 extern unsigned int *lcd_mp;
+extern int camera_fd;
+extern unsigned int n_buffers;
+extern struct buffer *buffers;
+extern volatile bool program_running;
+extern pthread_mutex_t lcd_mutex;
 
 //结构体
 

@@ -1,9 +1,36 @@
-// 添加必要的头文件
 #include <sys/stat.h>
 #include <time.h>
 #include <dirent.h>
 #include <sys/types.h>
 #include "camera.h"
+#include <errno.h>
+
+// 递归创建目录 (等效 mkdir -p)
+static int mkdir_p(const char *path, mode_t mode)
+{
+    char tmp[256];
+    char *p = NULL;
+    size_t len;
+
+    snprintf(tmp, sizeof(tmp), "%s", path);
+    len = strlen(tmp);
+    if (tmp[len - 1] == '/')
+        tmp[len - 1] = 0;
+
+    for (p = tmp + 1; *p; p++)
+    {
+        if (*p == '/')
+        {
+            *p = 0;
+            if (mkdir(tmp, mode) != 0 && errno != EEXIST)
+                return -1;
+            *p = '/';
+        }
+    }
+    if (mkdir(tmp, mode) != 0 && errno != EEXIST)
+        return -1;
+    return 0;
+}
 
 // 定义录像文件夹路径
 #define RECORD_PATH "/tmp/camera_records"
@@ -11,12 +38,8 @@
 
 #define TS_DEV "/dev/input/event0"
 
-int lcd_fd;
-unsigned int *lcd_mp;
-
-static int camera_fd = -1;
-static unsigned int n_buffers = 0;
-static struct buffer *buffers = NULL;
+// lcd_fd, lcd_mp, camera_fd, n_buffers, buffers 已在 API_Camera2.c 中定义
+// 此处通过 camera.h 的 extern 声明引用
 
 extern int buttonCount;
 
@@ -82,13 +105,18 @@ void yuyv_to_bmp(char *yuvbuf, const char *bmp_file)
 
     for (int y = 479; y >= 0; y--)
     {
-        for (int x = 0; x < 640; x++)
+        for (int x = 0; x < 640; x += 2)
         {
-            int i = y * 640 + x;
-            unsigned int rgb = pixel_yuv2rgb(yuvbuf[i * 2], yuvbuf[i * 2 + 1], yuvbuf[i * 2 + 3]);
-            buf_line[x * 3]     = (rgb) & 0xFF;
-            buf_line[x * 3 + 1] = (rgb >> 8) & 0xFF;
-            buf_line[x * 3 + 2] = (rgb >> 16) & 0xFF;
+            int j = y * 640 * 2 + x * 2;
+            unsigned int rgb0 = pixel_yuv2rgb(yuvbuf[j+0], yuvbuf[j+1], yuvbuf[j+3]);
+            unsigned int rgb1 = pixel_yuv2rgb(yuvbuf[j+2], yuvbuf[j+1], yuvbuf[j+3]);
+
+            buf_line[x * 3]     = (rgb0) & 0xFF;
+            buf_line[x * 3 + 1] = (rgb0 >> 8) & 0xFF;
+            buf_line[x * 3 + 2] = (rgb0 >> 16) & 0xFF;
+            buf_line[(x+1) * 3]     = (rgb1) & 0xFF;
+            buf_line[(x+1) * 3 + 1] = (rgb1 >> 8) & 0xFF;
+            buf_line[(x+1) * 3 + 2] = (rgb1 >> 16) & 0xFF;
         }
         fwrite(buf_line, 1, 640 * 3, bmp_fp);
     }
@@ -114,19 +142,33 @@ void record_video(void)
     struct tm *timeinfo;
     bool first_frame = true;
 
+    // 确保摄像头未打开，避免资源泄漏
+    if (camera_fd >= 0)
+        stop_camera();
+
     open_device();
     init_device();
     start_capturing();
 
     // 创建录像根目录
-    mkdir(RECORD_PATH, 0777);
+    if (mkdir_p(RECORD_PATH, 0777) != 0)
+    {
+        printf("Failed to create record directory: %s\n", RECORD_PATH);
+        stop_camera();
+        return;
+    }
 
     // 以时间戳创建子目录
     time(&now);
     timeinfo = localtime(&now);
     strftime(timestamp, sizeof(timestamp), "%Y%m%d_%H%M%S", timeinfo);
     snprintf(dir_path, sizeof(dir_path), "%s/%s", RECORD_PATH, timestamp);
-    mkdir(dir_path, 0777);
+    if (mkdir(dir_path, 0777) != 0)
+    {
+        printf("Failed to create record subdirectory: %s\n", dir_path);
+        stop_camera();
+        return;
+    }
 
     // yuv原始数据文件路径
     snprintf(filepath, sizeof(filepath), "%s/%s.yuv", dir_path, timestamp);
@@ -286,10 +328,27 @@ void circular_recording(void)
 
                 if (oldest_file[0])
                 {
-                    char cmd[512];
-                    bzero(cmd, sizeof(cmd));
-                    sprintf(cmd, "rm -rf %s", oldest_file);
-                    system(cmd);
+                    // 安全删除过期录像文件/目录
+                    DIR *d = opendir(oldest_file);
+                    if (d)
+                    {
+                        // 是目录: 先删除内部文件再删除目录
+                        struct dirent *de;
+                        char sub[512];
+                        while ((de = readdir(d)) != NULL)
+                        {
+                            if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0)
+                                continue;
+                            snprintf(sub, sizeof(sub), "%s/%s", oldest_file, de->d_name);
+                            remove(sub);
+                        }
+                        closedir(d);
+                        rmdir(oldest_file);
+                    }
+                    else
+                    {
+                        remove(oldest_file);
+                    }
                     printf("过期录像: %s 已清理\n", oldest_file);
                 }
             }
@@ -329,10 +388,7 @@ void handleButtonPress(Button *button, int buttonIndex)
             {
                 printf("进入录像功能\n");
                 current_state = STATE_RECORD;
-                open_device();
-                init_device();
-                start_capturing();
-                mainloop3();
+                record_video();
             }
             break;
 

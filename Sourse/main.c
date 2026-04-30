@@ -149,7 +149,7 @@ int main()
         fprintf(stderr, "内存分配失败\n");
         exit(-1);
     }
-    bzero(OnTimets, sizeof(struct ts_pix));
+    memset(OnTimets, 0, sizeof(struct ts_pix));
 
 
     // 3. 播放开机动画

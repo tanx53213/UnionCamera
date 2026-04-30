@@ -10,17 +10,12 @@
 #define  LCD_MAPSIZE   800*480*4
 // 天气结构体
 
-    unsigned int *lcd_mp;
+// lcd_mp/program_running/lcd_mutex 均已在 main.c 定义，通过 camera.h extern 引用
 
-// 全局变量声明
-
-static pthread_mutex_t lcd_mutex = PTHREAD_MUTEX_INITIALIZER;  // LCD显示互斥锁，用于防止多线程同时访问显示设备
-static volatile bool program_running = true;  // 程序运行状态标志，volatile确保多线程能即时看到变量更新
- char timebuffer[80];
 char *show_time();
-  extern int Get_weather(weather1 *wea_p);
- char my_pic_pictr_path[256] ={0}; //用于存储转换好的图像路径
-struct LcdDevice *lcd;  // 声明为全局变量
+extern int Get_weather(weather1 *wea_p);
+char my_pic_pictr_path[256] ={0};
+struct LcdDevice *lcd;
 
 
 struct LcdDevice *init_lcd(const char *device)//打开与映射LCD
@@ -66,11 +61,11 @@ struct LcdDevice *init_lcd(const char *device)//打开与映射LCD
 
 
 
-void* weather_time_thread(void* arg) //天气与时间线程锁
+void* weather_time_thread(void* arg) //天气与时间线程
 {
-    // 修复：从全局变量获取 lcd_mp，不要从 arg 取（arg 传的是 NULL）
-    // 或者在 main.c 里 pthread_create 第4个参数改为传 lcd_mp
-    unsigned int *local_lcd_mp = lcd_mp;  // 使用全局的 lcd_mp
+    unsigned int *local_lcd_mp = (unsigned int *)arg;
+    if (local_lcd_mp == NULL)
+        local_lcd_mp = lcd_mp;  // 回退到全局变量
 
     // 打开字体
     font *f = fontLoad("/usr/share/fonts/DroidSansFallback.ttf");
@@ -101,12 +96,21 @@ void* weather_time_thread(void* arg) //天气与时间线程锁
         bitmap *bm = createBitmapWithInit(150, 20, 4, getColor(50, 255, 255, 0));
         // 天气温度显示框 200x20
         bitmap *bw = createBitmapWithInit(200, 20, 4, getColor(50, 255, 255, 0));
+        // 湿度显示框 200x20
+        bitmap *bh = createBitmapWithInit(200, 20, 4, getColor(50, 255, 255, 0));
+        // 风向显示框 200x20
+        bitmap *bd = createBitmapWithInit(200, 20, 4, getColor(50, 255, 255, 0));
+        // 天气描述显示框 200x20
+        bitmap *bds = createBitmapWithInit(200, 20, 4, getColor(50, 255, 255, 0));
 
-        if (bm == NULL || bw == NULL)
+        if (bm == NULL || bw == NULL || bh == NULL || bd == NULL || bds == NULL)
         {
             fprintf(stderr, "weather_time_thread: bitmap 创建失败\n");
             if (bm) destroyBitmap(bm);
             if (bw) destroyBitmap(bw);
+            if (bh) destroyBitmap(bh);
+            if (bd) destroyBitmap(bd);
+            if (bds) destroyBitmap(bds);
             pthread_mutex_unlock(&lcd_mutex);
             sleep(1);
             continue;
@@ -117,17 +121,24 @@ void* weather_time_thread(void* arg) //天气与时间线程锁
         if (str != NULL)
             fontPrint(f, bm, 0, 0, str, getColor(0, 28, 106, 224), 0);
 
-        // 显示温度
-        fontPrint(f, bw, 0, 0, wea.Temperature, getColor(0, 28, 106, 224), 0);
+        // 显示天气各字段
+        fontPrint(f, bw,  0, 0, wea.Temperature,         getColor(0, 28, 106, 224), 0);
+        fontPrint(f, bh,  0, 0, wea.Relative_Humidity,   getColor(0, 28, 106, 224), 0);
+        fontPrint(f, bd,  0, 0, wea.Wind,                getColor(0, 28, 106, 224), 0);
+        fontPrint(f, bds, 0, 0, wea.Weather,             getColor(0, 28, 106, 224), 0);
 
-        // 渲染到LCD（坐标根据你的UI布局调整）
-        show_font_to_lcd(local_lcd_mp, 150, 80, bm);   // 时间显示位置
-        show_font_to_lcd(local_lcd_mp, 150, 100, bw);  // 天气显示位置
-
-        printf("-------------7\n");
+        // 渲染到LCD
+        show_font_to_lcd(local_lcd_mp, 150, 80,  bm);   // 时间
+        show_font_to_lcd(local_lcd_mp, 150, 100, bw);   // 温度
+        show_font_to_lcd(local_lcd_mp, 150, 120, bh);   // 湿度
+        show_font_to_lcd(local_lcd_mp, 150, 140, bd);   // 风向
+        show_font_to_lcd(local_lcd_mp, 150, 160, bds);  // 天气描述
 
         destroyBitmap(bm);
         destroyBitmap(bw);
+        destroyBitmap(bh);
+        destroyBitmap(bd);
+        destroyBitmap(bds);
 
         pthread_mutex_unlock(&lcd_mutex);
 
