@@ -15,6 +15,7 @@
  * ****************************************************************************************/
 
 #include "camera.h"
+#include "right_panel.h"
 
 
 // lcd_fd, lcd_mp 已在 main.c 中定义，此处通过 camera.h 的 extern 声明引用
@@ -178,7 +179,7 @@ void yuyv_to_lcd(char *yuvbuf)
     {
         for (size_t x = 0; x < 640; x++)
         {
-            lcd_mp[y*800+x+30] = rgbbuf[y*640+x]; 
+            lcd_mp[y*800+x] = rgbbuf[y*640+x]; 
         } 
     } 
 }
@@ -284,6 +285,9 @@ void start_capturing(void)
 void *backup_camera_thread(void *arg)      // 后视摄像头线程(非阻塞，可被电源键中断)
 {
     (void)arg;
+
+    // 初始化右侧信息栏 (仅在进入后视时绘制，主界面不可见)
+    right_panel_init(lcd_mp);
 
     while (current_state == STATE_BACKUP)
     {

@@ -1,43 +1,12 @@
 #include "camera.h"
+#include "right_panel.h"
 #include <pthread.h>
 
-// 动态路径解析：无视项目名称变化，通过多种策略自动查找资源文件
-//   策略1: 相对于当前工作目录 ./Data/<file>
-//   策略2: 相对于可执行文件所在目录 <exe_dir>/Data/<file>
-//   策略3: 通用回退 /tmp/Data/<file>
+// 资源路径解析：统一使用相对路径 ./Data/ ，无视项目目录名变化
+//   使用者应确保从项目根目录运行程序 (CWD = 项目根目录)
 void resolve_asset_path(char *out, size_t out_size, const char *relative_path)
 {
-    char candidate[256] = {0};
-
-    // 策略1 — 相对于当前工作目录
-    snprintf(candidate, sizeof(candidate), "./Data/%s", relative_path);
-    if (access(candidate, R_OK) == 0)
-    {
-        snprintf(out, out_size, "%s", candidate);
-        return;
-    }
-
-    // 策略2 — 相对于可执行文件所在目录 (通过 /proc/self/exe)
-    char exe_path[256] = {0};
-    ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
-    if (len > 0)
-    {
-        exe_path[len] = '\0';
-        char *last_slash = strrchr(exe_path, '/');
-        if (last_slash)
-        {
-            *last_slash = '\0';  // 去掉可执行文件名，保留目录路径
-            snprintf(candidate, sizeof(candidate), "%s/Data/%s", exe_path, relative_path);
-            if (access(candidate, R_OK) == 0)
-            {
-                snprintf(out, out_size, "%s", candidate);
-                return;
-            }
-        }
-    }
-
-    // 策略3 — 通用回退路径 (无项目名依赖)
-    snprintf(out, out_size, "/tmp/Data/%s", relative_path);
+    snprintf(out, out_size, "./Data/%s", relative_path);
 }
 
 pthread_mutex_t lcd_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -197,13 +166,18 @@ int main()
 
 
    // 5. 创建线程
-pthread_t weather_tid, touch_tid;
+pthread_t weather_tid, touch_tid, rs485_tid;
 printf("--------------main3\n");
 
 if (pthread_create(&weather_tid, NULL, weather_time_thread, (void*)lcd_mp) != 0)
 {
     printf("创建天气线程失败\n");
     return -1;
+}
+
+if (pthread_create(&rs485_tid, NULL, rs485_ultrasonic_thread, NULL) != 0)
+{
+    printf("创建RS485超声波线程失败\n");
 }
 
 if (pthread_create(&touch_tid, NULL, touch_thread, NULL) != 0)

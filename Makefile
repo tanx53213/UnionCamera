@@ -15,6 +15,7 @@ SRCS := \
 	$(SRC_DIR)/VideoPlayer3.c \
 	$(SRC_DIR)/API_Camera2.c \
 	$(SRC_DIR)/Draw_line.c \
+	$(SRC_DIR)/right_panel.c \
 	$(SRC_DIR)/test.c \
 	$(SRC_DIR)/testtime.c \
 	$(SRC_DIR)/get_weather.c

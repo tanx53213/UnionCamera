@@ -1,6 +1,7 @@
 #include "font.h"
 #include"showtime.h"
 #include "camera.h"
+#include "right_panel.h"
 #include <pthread.h>
 
 // LCD_DEV, LCD_MAPSIZE 已在 camera.h 中定义
@@ -63,33 +64,32 @@ void* weather_time_thread(void* arg) //天气与时间线程
     if (local_lcd_mp == NULL)
         local_lcd_mp = lcd_mp;  // 回退到全局变量
 
-    // 加载字体 (多层回退: 项目自带 → 系统路径 → 备选系统路径)
-    //   项目自带字体需放入 Data/ 目录 (如: Data/hei.TTF, Data/DroidSansFallback.ttf)
+    // 加载字体 (hei.TTF 支持中文，优先尝试)
     font *f = NULL;
     char font_path[256] = {0};
 
-    // 1. 优先使用 Data 目录下随项目分发的字体 (通过路径解析)
-    resolve_asset_path(font_path, sizeof(font_path), "DroidSansFallback.ttf");
+    // 1. 项目自带中文字体 hei.TTF
+    resolve_asset_path(font_path, sizeof(font_path), "hei.TTF");
     f = fontLoad(font_path);
     if (f == NULL)
     {
-        // 2. 系统标准路径
-        f = fontLoad("/usr/share/fonts/DroidSansFallback.ttf");
-    }
-    if (f == NULL)
-    {
-        // 3. 系统备选路径 (部分发行版)
-        f = fontLoad("/usr/share/fonts/truetype/DroidSansFallback.ttf");
-    }
-    if (f == NULL)
-    {
-        // 4. 项目自带中文字体 hei.TTF (freetype字库使用/ 目录)
-        resolve_asset_path(font_path, sizeof(font_path), "hei.TTF");
+        // 2. Data 目录下的 DroidSansFallback
+        resolve_asset_path(font_path, sizeof(font_path), "DroidSansFallback.ttf");
         f = fontLoad(font_path);
     }
     if (f == NULL)
     {
-        fprintf(stderr, "weather_time_thread: 所有字体路径均加载失败，天气/时间将不显示\n");
+        // 3. 系统标准路径
+        f = fontLoad("/usr/share/fonts/DroidSansFallback.ttf");
+    }
+    if (f == NULL)
+    {
+        // 4. 系统备选路径
+        f = fontLoad("/usr/share/fonts/truetype/DroidSansFallback.ttf");
+    }
+    if (f == NULL)
+    {
+        fprintf(stderr, "weather_time_thread: 所有字体路径均加载失败\n");
         return NULL;
     }
     printf("font ptr: %p\n", f);
@@ -105,59 +105,24 @@ void* weather_time_thread(void* arg) //天气与时间线程
         if (Get_weather(&wea) != 0)
         {
             fprintf(stderr, "weather_time_thread: 获取天气失败\n");
-            // 失败不退出，继续循环等待下次更新
         }
 
+        // 获取时间
+        char *time_str = show_time();
+
+        // 更新全局面板数据 (在 g_panel_mutex 保护下)
+        pthread_mutex_lock(&g_panel_mutex);
+        if (time_str)
+            strncpy(g_panel_data.time_str, time_str, sizeof(g_panel_data.time_str) - 1);
+        strncpy(g_panel_data.temperature, wea.Temperature,       sizeof(g_panel_data.temperature) - 1);
+        strncpy(g_panel_data.humidity,    wea.Relative_Humidity, sizeof(g_panel_data.humidity) - 1);
+        strncpy(g_panel_data.wind,        wea.Wind,              sizeof(g_panel_data.wind) - 1);
+        strncpy(g_panel_data.weather,     wea.Weather,           sizeof(g_panel_data.weather) - 1);
+        pthread_mutex_unlock(&g_panel_mutex);
+
+        // 渲染右侧面板 (在 lcd_mutex 保护下)
         pthread_mutex_lock(&lcd_mutex);
-
-        // 时间显示框 150x20
-        bitmap *bm = createBitmapWithInit(150, 20, 4, getColor(50, 255, 255, 0));
-        // 天气温度显示框 200x20
-        bitmap *bw = createBitmapWithInit(200, 20, 4, getColor(50, 255, 255, 0));
-        // 湿度显示框 200x20
-        bitmap *bh = createBitmapWithInit(200, 20, 4, getColor(50, 255, 255, 0));
-        // 风向显示框 200x20
-        bitmap *bd = createBitmapWithInit(200, 20, 4, getColor(50, 255, 255, 0));
-        // 天气描述显示框 200x20
-        bitmap *bds = createBitmapWithInit(200, 20, 4, getColor(50, 255, 255, 0));
-
-        if (bm == NULL || bw == NULL || bh == NULL || bd == NULL || bds == NULL)
-        {
-            fprintf(stderr, "weather_time_thread: bitmap 创建失败\n");
-            if (bm) destroyBitmap(bm);
-            if (bw) destroyBitmap(bw);
-            if (bh) destroyBitmap(bh);
-            if (bd) destroyBitmap(bd);
-            if (bds) destroyBitmap(bds);
-            pthread_mutex_unlock(&lcd_mutex);
-            sleep(1);
-            continue;
-        }
-
-        // 获取并显示时间
-        char *str = show_time();
-        if (str != NULL)
-            fontPrint(f, bm, 0, 0, str, getColor(0, 28, 106, 224), 0);
-
-        // 显示天气各字段
-        fontPrint(f, bw,  0, 0, wea.Temperature,         getColor(0, 28, 106, 224), 0);
-        fontPrint(f, bh,  0, 0, wea.Relative_Humidity,   getColor(0, 28, 106, 224), 0);
-        fontPrint(f, bd,  0, 0, wea.Wind,                getColor(0, 28, 106, 224), 0);
-        fontPrint(f, bds, 0, 0, wea.Weather,             getColor(0, 28, 106, 224), 0);
-
-        // 渲染到LCD
-        show_font_to_lcd(local_lcd_mp, 150, 80,  bm);   // 时间
-        show_font_to_lcd(local_lcd_mp, 150, 100, bw);   // 温度
-        show_font_to_lcd(local_lcd_mp, 150, 120, bh);   // 湿度
-        show_font_to_lcd(local_lcd_mp, 150, 140, bd);   // 风向
-        show_font_to_lcd(local_lcd_mp, 150, 160, bds);  // 天气描述
-
-        destroyBitmap(bm);
-        destroyBitmap(bw);
-        destroyBitmap(bh);
-        destroyBitmap(bd);
-        destroyBitmap(bds);
-
+        right_panel_draw_all(local_lcd_mp, f);
         pthread_mutex_unlock(&lcd_mutex);
 
         sleep(1);
