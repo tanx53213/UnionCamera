@@ -51,7 +51,7 @@ int main(void)
 	
 	LED_Init();
 	KEY_Init();
-	//BUZZER_Init();
+	BUZZER_Init();
 		HC_SR04_Init();										// 超声波hc_sr04模块初始化
 	printf("This is hc_sr04 test!\r\n");	
 
